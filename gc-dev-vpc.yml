@@ -1,0 +1,256 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Creates VPC with public and private subnets
+
+# Provides additional information about the template
+Metadata: # OPTIONAL
+  AWS::CloudFormation::Interface:
+    ParameterGroups: # Organizes parameters into groups for better readability
+      - Label:
+          default: VPC Configuration
+        Parameters:
+          - CFVpcCIDR
+          - CFPublicSubnet1CIDR
+          - CFPublicSubnet2CIDR
+          - CFPrivateSubnet1CIDR
+          - CFPrivateSubnet2CIDR
+          - CFSSHAccessCIDR
+
+# Input parameters required for the CloudFormation template
+Parameters: # OPTIONAL
+  CFVpcCIDR: # Allocates IP addresses and IP routing, allowing devices to communicate
+    Default: 10.0.0.0/16
+    Description: The CIDR block for the VPC
+    Type: String
+
+  CFPublicSubnet1CIDR:
+    Default: 10.0.1.0/24
+    Description: The CIDR block for the first public subnet
+    Type: String
+
+  CFPublicSubnet2CIDR:
+    Default: 10.0.2.0/24
+    Description: The CIDR block for the second public subnet
+    Type: String
+
+  CFPrivateSubnet1CIDR:
+    Default: 10.0.3.0/24
+    Description: The CIDR block for the first private subnet
+    Type: String
+
+  CFPrivateSubnet2CIDR:
+    Default: 10.0.4.0/24
+    Description: The CIDR block for the second private subnet
+    Type: String
+
+  CFSSHAccessCIDR: # Parameter for defining the SSH IP address range
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: Must be a valid IP CIDR range of the form x.x.x.x/x
+    Default: 0.0.0.0/0
+    Description: The IP address range that can be used to access the web server using SSH
+    MaxLength: "18"
+    MinLength: "9"
+    Type: String
+
+# Declare the AWS resources that CloudFormation will create and configure
+Resources: # REQUIRED
+  CFVPC: # Set up the basic networking environment where the resources will live
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref CFVpcCIDR # Reference to the CFVpcCIDR parameter value
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: default # Determines where the EC2 instances will run (i.e. the AWS hardware)
+      Tags:
+        - Key: Name
+          Value: gorgeous_cupcakesCFVPC
+
+  CFPublicSubnet1: # Public subnets have routes to the internet through an IG
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref CFPublicSubnet1CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: CFPublicSubnet1
+      VpcId: !Ref CFVPC
+
+  CFPublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref CFPublicSubnet2CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: CFPublicSubnet2
+      VpcId: !Ref CFVPC
+
+  CFPrivateSubnet1: # Creates a private subnet
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""] # Availability Zones are isolated from failures in other AZs
+      CidrBlock: !Ref CFPrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: CFPrivateSubnet1
+      VpcId: !Ref CFVPC
+
+  CFPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref CFPrivateSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: CFPrivateSubnet2
+      VpcId: !Ref CFVPC
+
+  CFInternetGateway: # IG allows communication between VPC instances and the internet
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: CFIGW
+
+  CFInternetGatewayAttachment: # Attaches the Internet Gateway to the VPC
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref CFInternetGateway
+      VpcId: !Ref CFVPC
+
+  CFPublicRouteTable: # Contains rules (aka routes) used to determine where network traffic is directed
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref CFVPC
+
+  CFPublicRoute: # Directs ALL traffic (all = 0.0.0.0/0) to the IG
+    Type: AWS::EC2::Route
+    DependsOn: CFInternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref CFPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref CFInternetGateway
+
+  CFPublicSubnet1RouteTableAssociation: # Associates the public subnet 1 with the public route table
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CFPublicSubnet1
+      RouteTableId: !Ref CFPublicRouteTable
+
+  CFPublicSubnet2RouteTableAssociation: # Associates the public subnet 2 with the public route table
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CFPublicSubnet2
+      RouteTableId: !Ref CFPublicRouteTable
+
+  CFPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref CFVPC
+
+  CFPrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref CFPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref CFNATGateway
+
+  CFPrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CFPrivateSubnet1
+      RouteTableId: !Ref CFPrivateRouteTable
+
+  CFPrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CFPrivateSubnet2
+      RouteTableId: !Ref CFPrivateRouteTable
+
+  # Elastic IP Address replaces the instance's public IPv4 address
+  CFEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: CFInternetGatewayAttachment
+
+  # Network Address Translation allows private subnet to connect to internet (but not the other way around)
+  CFNATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt CFEIP.AllocationId # associate gateway with EIP
+      SubnetId: !Ref CFPublicSubnet1
+
+  CFSecurityGroup: # This resource controls inbound and outbound traffic, like a firewall
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for network access
+      VpcId: !Ref CFVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref CFSSHAccessCIDR
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0 # HTTP access
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0 # HTTPS access
+      SecurityGroupEgress: # Explicitly allow all outbound traffic
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  # CFSampleIngressRule: # THIS RESOURCE WAS ADDED, MODIFIED AND REMOVED
+  #   Type: "AWS::EC2::SecurityGroupIngress"
+  #   Properties:
+  #     GroupId: !GetAtt CFSecurityGroup.GroupId
+  #     IpProtocol: tcp # ORIGINAL STATE
+  #     IpProtocol: udp # MODIFIED STATE
+  #     FromPort: 1234
+  #     ToPort: 1234
+  #     CidrIp: 203.0.113.0/24
+
+# Declare output values to be imported into other stacks (i.e. CloudFoundation deployments)
+# Declare output values to be sent in a 'describe-stacks' command
+# Declare output values for viewing in the AWS CloudFormation console
+Outputs: # OPTIONAL
+  CFVPC:
+    Description: A reference to the created VPC
+    Export: # Exports the output value to be used by other stacks
+      Name: !Sub ${AWS::StackName}-CFVPC
+    Value: !Ref CFVPC
+
+  CFPublicSubnet1:
+    Description: A reference to the public subnet 1
+    Export:
+      Name: !Sub ${AWS::StackName}-CFPublicSubnet1
+    Value: !Ref CFPublicSubnet1
+
+  CFPublicSubnet2:
+    Description: A reference to the public subnet 2
+    Export:
+      Name: !Sub ${AWS::StackName}-CFPublicSubnet2
+    Value: !Ref CFPublicSubnet2
+
+  CFPrivateSubnet1:
+    Description: A reference to the private subnet 1
+    Export:
+      Name: !Sub ${AWS::StackName}-CFPrivateSubnet1
+    Value: !Ref CFPrivateSubnet1
+
+  CFPrivateSubnet2:
+    Description: A reference to the private subnet 2
+    Export:
+      Name: !Sub ${AWS::StackName}-CFPrivateSubnet2
+    Value: !Ref CFPrivateSubnet2
+
+  CFSecurityGroup:
+    Description: A reference to the security group
+    Export:
+      Name: !Sub ${AWS::StackName}-CFSecurityGroup
+    Value: !Ref CFSecurityGroup

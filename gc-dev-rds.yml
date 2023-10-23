@@ -1,0 +1,151 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Creates RDS database with MySQL
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: CF VPC Stack Name
+        Parameters:
+          - CFVpcStackName
+      - Label:
+          default: Database Parameters
+        Parameters:
+          - CFDatabaseInstanceIdentifier
+          - CFDatabaseName
+          - CFDatabaseUser
+          - CFDatabasePassword
+          - CFDatabaseBackupRetentionPeriod
+          - CFDatabaseAllocatedStorage
+          - CFDatabaseInstanceClass
+          - CFMultiAZDatabase
+
+Parameters:
+  CFVpcStackName:
+    Description: The name of the VPC stack that exports values
+    Type: String
+    Default: gorgeous-cupcakes-dev-vpc # FOR TESTING PURPOSES ONLY
+
+  CFDatabaseInstanceIdentifier:
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9]*"
+    ConstraintDescription: Begin with a letter, and only contain letters and numbers. Must be unique across all existing instances owned by an AWS account in an AWS Region.
+    Description: DB instance identifier name
+    MaxLength: 60
+    MinLength: 1
+    Type: String
+    Default: mysqldb # FOR TESTING PURPOSES ONLY
+
+  CFDatabaseName:
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9_]*"
+    ConstraintDescription: Begin with a letter, and contain letters, numbers and underscore
+    Description: MySQL database name
+    MaxLength: 64
+    MinLength: 1
+    Type: String
+    Default: gorgeous_cupcakes # FOR TESTING PURPOSES ONLY
+
+  CFDatabaseUser:
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9]*"
+    ConstraintDescription: Begin with a letter, and only contain letters and numbers
+    Description: Database username
+    MaxLength: 16
+    MinLength: 1
+    NoEcho: true # Changes text to *** while typing
+    Type: String
+    Default: admin # FOR TESTING PURPOSES ONLY
+
+  CFDatabasePassword:
+    AllowedPattern: "[a-zA-Z0-9]*"
+    ConstraintDescription: Only contain letters and numbers
+    Description: Database password
+    MaxLength: 41
+    MinLength: 8
+    NoEcho: true # Changes text to *** while typing
+    Type: String
+    Default: password # FOR TESTING PURPOSES ONLY
+
+  CFDatabaseBackupRetentionPeriod:
+    ConstraintDescription: Database backup retention period
+    Description: The number of days for which automatic snapshots are retained
+    MaxValue: 35
+    MinValue: 0
+    Type: Number
+    Default: 0 # do not backup the DB
+
+  CFDatabaseAllocatedStorage:
+    ConstraintDescription: Size must be between 5 and 1024GB
+    Description: DB size (GB)
+    MaxValue: 65536
+    MinValue: 5
+    Type: Number
+    Default: 20 # Free tier only goes up to 20
+
+  CFDatabaseInstanceClass:
+    AllowedValues:
+      - db.t1.micro
+      - db.t2.micro
+      - db.m1.small
+      - db.m1.medium
+      - db.m1.large
+    ConstraintDescription: Must select a valid database instance type
+    Description: DB instance type
+    Type: String
+    Default: db.t2.micro
+
+  CFMultiAZDatabase:
+    AllowedValues:
+      - true
+      - false
+    ConstraintDescription: True or false
+    Description: Multi-AZ MySQL Amazon RDS database
+    Type: String
+    Default: false # do not create DB in any other AZ
+
+Resources:
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: DB Subnet Group
+      SubnetIds:
+        # - subnet-09f3fea82ddf6b5b5 # TROUBLESHOOTING: RDS deploys to different VPC
+        # - subnet-08636f6c4d6daf70d # TROUBLESHOOTING: RDS deploys to different VPC
+        - Fn::ImportValue: !Sub ${CFVpcStackName}-CFPrivateSubnet1
+        - Fn::ImportValue: !Sub ${CFVpcStackName}-CFPrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: DB Subnet Group
+
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: !Ref CFDatabaseAllocatedStorage
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      BackupRetentionPeriod: !Ref CFDatabaseBackupRetentionPeriod
+      DBInstanceClass: !Ref CFDatabaseInstanceClass
+      DBInstanceIdentifier: !Ref CFDatabaseInstanceIdentifier
+      DBName: !Ref CFDatabaseName
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      Engine: mysql # keep this lowercase
+      EngineVersion: 5.7.39 # whichever version is compatible
+      MasterUsername: !Ref CFDatabaseUser # NOT SECRET
+      # MasterUsername: !Sub '{{resolve:ssm:/gorgeous_cupcakes/Database/Username:1}}' # SECRET
+      MasterUserPassword: !Ref CFDatabasePassword # NOT SECRET
+      # MasterUserPassword: !Sub '{{resolve:ssm:/gorgeous_cupcakes/Database/Password:1}}' # SECRET
+      MultiAZ: !Ref CFMultiAZDatabase
+      VPCSecurityGroups:
+        - Fn::ImportValue: !Sub ${CFVpcStackName}-CFSecurityGroup
+      StorageEncrypted: false # true = enabling encryption at rest (not all instances allow for this)
+
+Outputs:
+  DBInstanceIdentifier:
+    Description: Database Instance Identifier
+    Value: !Ref DBInstance
+
+  DBInstanceEndpoint:
+    Description: Database Endpoint
+    Value: !GetAtt DBInstance.Endpoint.Address
+
+  DBInstancePort:
+    Description: Database Port
+    Value: !GetAtt DBInstance.Endpoint.Port

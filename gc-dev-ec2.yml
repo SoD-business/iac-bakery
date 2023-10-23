@@ -1,0 +1,104 @@
+Parameters:
+  CFVpcStackName:
+    Type: String
+    Description: The name of the CloudFormation stack where the VPC is defined
+    Default: gorgeous-cupcakes-dev-vpc # FOR TESTING PURPOSES ONLY
+
+  CFVpcId: # ADDED THIS
+    Description: The ID of the VPC
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-0e8726a4f9e9b0b3b # FOR TESTING PURPOSES ONLY
+
+  CFImageId:
+    Description: The ID of the EC2 image (AMI)
+    Type: AWS::EC2::Image::Id
+    Default: ami-0d52ddcdf3a885741 # FOR TESTING PURPOSES ONLY (Amazon Linux 2)
+
+  RDSMasterUsername:
+    Type: String
+    Description: The database admin account username
+    Default: admin # FOR TESTING PURPOSES ONLY
+
+  RDSMasterPassword:
+    Type: String
+    NoEcho: True
+    Description: The database admin account password
+    Default: password # FOR TESTING PURPOSES ONLY
+
+Resources:
+  GorgeousCupcakesWebSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow access on ports 80 and 22
+      GroupName: gorgeous-cupcakes-web-sg
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: gorgeous-cupcakes-web-sg
+      VpcId: !Ref CFVpcId # CHANGED THIS
+
+  GorgeousCupcakesDBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow access on port 3306
+      GroupName: gorgeous-cupcakes-db-sg
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: gorgeous-cupcakes-db-sg
+      VpcId: !Ref CFVpcId # CHANGED THIS
+
+  GorgeousCupcakesWebEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      SubnetId:
+        Fn::ImportValue: !Sub ${CFVpcStackName}-CFPublicSubnet1
+      SecurityGroupIds:
+        - !Ref GorgeousCupcakesWebSG # Missing the -
+      KeyName: 505AT2keypair
+      ImageId: !Ref CFImageId
+      Tags:
+        - Key: Name
+          Value: gorgeous-cupcakes-web-ec2
+      UserData: # httpd = Apache
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          sudo su
+          yum update -y
+          yum install -y httpd
+          cd /var/www/html
+          wget https://PATH_TO_SITE_FILES/gorgeous_cupcakes.zip
+          unzip gorgeous_cupcakes.zip
+          cp -r CloudFormation-main/* /var/www/html/
+          rm -rf CloudFormation-main gorgeous_cupcakes.zip
+          systemctl enable httpd
+          systemctl start httpd
+
+      # UNZIP not working - possibly due to the webserver version not recognising 'unzip'
+
+  # Target Group for Load Balancer
+  WebAppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: "/"
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      VpcId:
+        Fn::ImportValue: !Sub "${CFVpcStackName}-CFVPC"
